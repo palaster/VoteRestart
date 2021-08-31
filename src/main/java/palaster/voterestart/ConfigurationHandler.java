@@ -17,10 +17,10 @@ public class ConfigurationHandler {
 					.defineInRange("timeBetweenVotes", 36000, 0, Integer.MAX_VALUE);
 			timeUntilVoteClose = builder
 					.comment("The time (in ticks) until the vote closes")
-					.defineInRange("timeUntilVoteClose", 6000, 0, Integer.MAX_VALUE);
+					.defineInRange("timeUntilVoteClose", 3000, 0, Integer.MAX_VALUE);
 			timeUntilRestart = builder
 					.comment("The time (in ticks) until the restart")
-					.defineInRange("timeUntilRestart", 6000, 0, Integer.MAX_VALUE);
+					.defineInRange("timeUntilRestart", 3000, 0, Integer.MAX_VALUE);
 		}
 	}
 	

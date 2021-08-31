@@ -6,6 +6,7 @@ import net.minecraftforge.api.distmarker.Dist;
 import net.minecraftforge.event.RegisterCommandsEvent;
 import net.minecraftforge.event.TickEvent.Phase;
 import net.minecraftforge.event.TickEvent.ServerTickEvent;
+import net.minecraftforge.event.entity.player.PlayerEvent.PlayerLoggedOutEvent;
 import net.minecraftforge.eventbus.api.SubscribeEvent;
 import net.minecraftforge.fml.DistExecutor;
 import net.minecraftforge.fml.ExtensionPoint;
@@ -30,6 +31,12 @@ public class VoteRestart {
     			if(Vote.timeBetweenVotes > 0)
     				Vote.timeBetweenVotes--;
     	}
+    }
+    
+    @SubscribeEvent
+    public void onPlayerLogout(PlayerLoggedOutEvent event) {
+    	if(VoteRestartCommand.openVote != null)
+    		VoteRestartCommand.openVote.removeVote(event.getPlayer().getUUID());
     }
     
     @SubscribeEvent

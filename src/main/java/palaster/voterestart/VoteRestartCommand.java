@@ -9,9 +9,7 @@ import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 
 import net.minecraft.command.CommandSource;
 import net.minecraft.command.Commands;
-import net.minecraft.command.arguments.MessageArgument;
 import net.minecraft.util.text.ChatType;
-import net.minecraft.util.text.ITextComponent;
 import net.minecraft.util.text.StringTextComponent;
 
 public class VoteRestartCommand {
@@ -19,27 +17,36 @@ public class VoteRestartCommand {
 	public static Vote openVote = null;
 	
 	public static void register(CommandDispatcher<CommandSource> dispatcher) {
-		LiteralArgumentBuilder<CommandSource> firstCommand = Commands.literal("voterestart").executes((commandContext) -> {
+		LiteralArgumentBuilder<CommandSource> startVoteCommand = Commands.literal("voterestart").executes((commandContext) -> {
 			return startVote(commandContext.getSource());
-		}).then(Commands.literal("force").then(Commands.argument("vote",  MessageArgument.message()).executes((commandContext) -> {
-			return vote(commandContext.getSource(), true, MessageArgument.getMessage(commandContext, "vote"));
+		});
+		
+		LiteralArgumentBuilder<CommandSource> forceYesCommand = Commands.literal("voterestart").then(Commands.literal("force").then(Commands.literal("yes").executes((commandContext) -> {
+			return vote(commandContext.getSource(), true, true);
+		})));
+		LiteralArgumentBuilder<CommandSource> forceNoCommand = Commands.literal("voterestart").then(Commands.literal("force").then(Commands.literal("no").executes((commandContext) -> {
+			return vote(commandContext.getSource(), true, false);
 		})));
 		
-		LiteralArgumentBuilder<CommandSource> secondCommand = Commands.literal("voterestart").executes((commandContext) -> {
-			return startVote(commandContext.getSource());
-		}).then(Commands.argument("vote",  MessageArgument.message()).executes((commandContext) -> {
-			return vote(commandContext.getSource(), false, MessageArgument.getMessage(commandContext, "vote"));
+		LiteralArgumentBuilder<CommandSource> yesCommand = Commands.literal("voterestart").then(Commands.literal("yes").executes((commandContext) -> {
+			return vote(commandContext.getSource(), false, true);
+		}));
+		LiteralArgumentBuilder<CommandSource> noCommand = Commands.literal("voterestart").then(Commands.literal("no").executes((commandContext) -> {
+			return vote(commandContext.getSource(), false, false);
 		}));
 		
-		dispatcher.register(firstCommand);
-		dispatcher.register(secondCommand);
+		dispatcher.register(startVoteCommand);
+		dispatcher.register(forceYesCommand);
+		dispatcher.register(forceNoCommand);
+		dispatcher.register(yesCommand);
+		dispatcher.register(noCommand);
 	}
 	
 	private static int startVote(CommandSource commandSource) {
 		if(openVote == null) {
 			if(Vote.timeBetweenVotes <= 0) {
 				openVote = new Vote(commandSource);
-				commandSource.sendSuccess(new StringTextComponent("New Vote has started"), true);
+				commandSource.getServer().getPlayerList().broadcastMessage(new StringTextComponent("New Restart Vote has started"), ChatType.CHAT, commandSource.getEntity().getUUID());
 			} else
 				commandSource.sendFailure(new StringTextComponent("Can't open new vote for " + Vote.timeBetweenVotes + " ticks"));
 		} else
@@ -47,16 +54,14 @@ public class VoteRestartCommand {
 		return 0;
 	}
 	
-	private static int vote(CommandSource commandSource, boolean force, ITextComponent iTextComponent) {
+	private static int vote(CommandSource commandSource, boolean force, boolean isYes) {
 		if(openVote != null) {
-			if(iTextComponent.getContents().equals("yes") || iTextComponent.getContents().equals("no")) {
-				boolean result = openVote.addVote(commandSource.getEntity().getUUID(), force, iTextComponent.getContents().equals("yes"));
-				if(result)
-					commandSource.sendSuccess(new StringTextComponent("Your vote has been cast"), true);
-				else
-					commandSource.sendFailure(new StringTextComponent("You already cast your vote. Use force to change it"));
-			} else
-				commandSource.sendFailure(new StringTextComponent("Vote not in correct format (yes/no)"));
+			boolean result = openVote.addVote(commandSource.getEntity().getUUID(), force, isYes);
+			if(result)
+				commandSource.sendSuccess(new StringTextComponent("Your vote has been cast"), true);
+			else
+				commandSource.sendFailure(new StringTextComponent("You already cast your vote. Use force to change it"));
+			openVote.tryFinishVote();
 		} else
 			commandSource.sendFailure(new StringTextComponent("There isn't an open vote"));
 		return 0;
@@ -91,6 +96,8 @@ public class VoteRestartCommand {
 			}
 		}
 		
+		public void removeVote(UUID uuid) { votes.remove(uuid); }
+		
 		public void update() {
 			if(shouldRestart) {
 				if(timeUntilRestart <= 0)
@@ -98,32 +105,43 @@ public class VoteRestartCommand {
 				else
 					timeUntilRestart--;
 			} else {
-				if(timeUntilVoteClose <= 0) {
-					int amountOfVotes = votes.size();
-					int amountOfPlayers = commandSource.getServer().getPlayerList().getPlayerCount();
-					if (amountOfVotes >= (amountOfPlayers / 2)) {
-						int yes = 0, no = 0;
-						for(Boolean vote : votes.values()) {
-							if(vote)
-								yes++;
-							else
-								no++;
-						}
-						if(yes > no) {
-							commandSource.getServer().getPlayerList().broadcastMessage(new StringTextComponent("Vote passed will restart in " + timeUntilRestart + " ticks"), ChatType.CHAT, commandSource.getEntity().getUUID());
-							shouldRestart = true;
-						} else {
-							commandSource.getServer().getPlayerList().broadcastMessage(new StringTextComponent("Vote failed will not restart"), ChatType.CHAT, commandSource.getEntity().getUUID());
-							timeBetweenVotes = ConfigurationHandler.SERVER.timeBetweenVotes.get();
-							VoteRestartCommand.openVote = null;
-						}
-					} else {
-						commandSource.getServer().getPlayerList().broadcastMessage(new StringTextComponent("Vote failed due to more than half of the players not voting"), ChatType.CHAT, commandSource.getEntity().getUUID());
-						timeBetweenVotes = ConfigurationHandler.SERVER.timeBetweenVotes.get();
-						VoteRestartCommand.openVote = null;
-					}
-				} else
+				if(timeUntilVoteClose <= 0)
+					finishVote();
+				else
 					timeUntilVoteClose--;
+			}
+		}
+		
+		public void tryFinishVote() {
+			int amountOfVotes = votes.size();
+			int amountOfPlayers = commandSource.getServer().getPlayerList().getPlayerCount();
+			if(amountOfVotes >= amountOfPlayers)
+				finishVote();
+		}
+		
+		private void finishVote() {
+			int amountOfVotes = votes.size();
+			int amountOfPlayers = commandSource.getServer().getPlayerList().getPlayerCount();
+			if (amountOfVotes >= (amountOfPlayers / 2)) {
+				int yes = 0, no = 0;
+				for(Boolean vote : votes.values()) {
+					if(vote)
+						yes++;
+					else
+						no++;
+				}
+				if(yes > no) {
+					commandSource.getServer().getPlayerList().broadcastMessage(new StringTextComponent("Vote passed will restart in " + timeUntilRestart + " ticks"), ChatType.CHAT, commandSource.getEntity().getUUID());
+					shouldRestart = true;
+				} else {
+					commandSource.getServer().getPlayerList().broadcastMessage(new StringTextComponent("Vote failed will not restart"), ChatType.CHAT, commandSource.getEntity().getUUID());
+					timeBetweenVotes = ConfigurationHandler.SERVER.timeBetweenVotes.get();
+					VoteRestartCommand.openVote = null;
+				}
+			} else {
+				commandSource.getServer().getPlayerList().broadcastMessage(new StringTextComponent("Vote failed due to more than half of the players not voting"), ChatType.CHAT, commandSource.getEntity().getUUID());
+				timeBetweenVotes = ConfigurationHandler.SERVER.timeBetweenVotes.get();
+				VoteRestartCommand.openVote = null;
 			}
 		}
 	}
