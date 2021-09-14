@@ -9,6 +9,8 @@ import com.mojang.brigadier.builder.LiteralArgumentBuilder;
 
 import net.minecraft.command.CommandSource;
 import net.minecraft.command.Commands;
+import net.minecraft.server.MinecraftServer;
+import net.minecraft.util.Util;
 import net.minecraft.util.text.ChatType;
 import net.minecraft.util.text.StringTextComponent;
 
@@ -43,27 +45,33 @@ public class VoteRestartCommand {
 	}
 	
 	private static int startVote(CommandSource commandSource) {
-		if(openVote == null) {
-			if(Vote.timeBetweenVotes <= 0) {
-				openVote = new Vote(commandSource);
-				commandSource.getServer().getPlayerList().broadcastMessage(new StringTextComponent("New Restart Vote has started"), ChatType.CHAT, commandSource.getEntity().getUUID());
+		if(commandSource.getEntity() != null) {
+			if(openVote == null) {
+				if(Vote.timeBetweenVotes <= 0) {
+					openVote = new Vote(commandSource);
+					commandSource.getServer().getPlayerList().broadcastMessage(new StringTextComponent("New Restart Vote has started"), ChatType.CHAT, commandSource.getEntity().getUUID());
+				} else
+					commandSource.sendFailure(new StringTextComponent("Can't open new vote for " + Vote.timeBetweenVotes + " ticks"));
 			} else
-				commandSource.sendFailure(new StringTextComponent("Can't open new vote for " + Vote.timeBetweenVotes + " ticks"));
+				commandSource.sendFailure(new StringTextComponent("Vote has already started"));
 		} else
-			commandSource.sendFailure(new StringTextComponent("Vote has already started"));
+			commandSource.sendFailure(new StringTextComponent("Servers aren't allowed to start a vote"));
 		return 0;
 	}
 	
 	private static int vote(CommandSource commandSource, boolean force, boolean isYes) {
-		if(openVote != null) {
-			boolean result = openVote.addVote(commandSource.getEntity().getUUID(), force, isYes);
-			if(result)
-				commandSource.sendSuccess(new StringTextComponent("Your vote has been cast"), true);
-			else
-				commandSource.sendFailure(new StringTextComponent("You already cast your vote. Use force to change it"));
-			openVote.tryFinishVote();
+		if(commandSource.getEntity() != null) {
+			if(openVote != null) {
+				boolean result = openVote.addVote(commandSource.getEntity().getUUID(), force, isYes);
+				if(result)
+					commandSource.sendSuccess(new StringTextComponent("Your vote has been cast"), true);
+				else
+					commandSource.sendFailure(new StringTextComponent("You already cast your vote. Use force to change it"));
+				openVote.tryFinishVote();
+			} else
+				commandSource.sendFailure(new StringTextComponent("There isn't an open vote"));
 		} else
-			commandSource.sendFailure(new StringTextComponent("There isn't an open vote"));
+			commandSource.sendFailure(new StringTextComponent("Servers aren't allowed to vote"));
 		return 0;
 	}
 	
@@ -71,7 +79,7 @@ public class VoteRestartCommand {
 		
 		public static int timeBetweenVotes = ConfigurationHandler.SERVER.timeBetweenVotes.get();
 		
-		private final CommandSource commandSource;
+		private final MinecraftServer minecraftServer;
 		
 		private int timeUntilVoteClose = ConfigurationHandler.SERVER.timeUntilVoteClose.get(),
 				timeUntilRestart = ConfigurationHandler.SERVER.timeUntilRestart.get();
@@ -79,9 +87,7 @@ public class VoteRestartCommand {
 		
 		private boolean shouldRestart = false;
 		
-		public Vote(CommandSource commandSource) {
-			this.commandSource = commandSource;
-		}
+		public Vote(CommandSource commandSource) { this.minecraftServer = commandSource.getServer(); }
 		
 		public boolean addVote(UUID uuid, boolean force, boolean vote) {
 			if(votes.containsKey(uuid)) {
@@ -101,7 +107,7 @@ public class VoteRestartCommand {
 		public void update() {
 			if(shouldRestart) {
 				if(timeUntilRestart <= 0)
-					commandSource.getServer().halt(false);
+					minecraftServer.halt(false);
 				else
 					timeUntilRestart--;
 			} else {
@@ -114,14 +120,14 @@ public class VoteRestartCommand {
 		
 		public void tryFinishVote() {
 			int amountOfVotes = votes.size();
-			int amountOfPlayers = commandSource.getServer().getPlayerList().getPlayerCount();
+			int amountOfPlayers = minecraftServer.getPlayerList().getPlayerCount();
 			if(amountOfVotes >= amountOfPlayers)
 				finishVote();
 		}
 		
 		private void finishVote() {
 			int amountOfVotes = votes.size();
-			int amountOfPlayers = commandSource.getServer().getPlayerList().getPlayerCount();
+			int amountOfPlayers = minecraftServer.getPlayerList().getPlayerCount();
 			if (amountOfVotes >= (amountOfPlayers / 2)) {
 				int yes = 0, no = 0;
 				for(Boolean vote : votes.values()) {
@@ -131,15 +137,15 @@ public class VoteRestartCommand {
 						no++;
 				}
 				if(yes > no) {
-					commandSource.getServer().getPlayerList().broadcastMessage(new StringTextComponent("Vote passed will restart in " + timeUntilRestart + " ticks"), ChatType.CHAT, commandSource.getEntity().getUUID());
+					minecraftServer.getPlayerList().broadcastMessage(new StringTextComponent("Vote passed will restart in " + timeUntilRestart + " ticks"), ChatType.CHAT, Util.NIL_UUID);
 					shouldRestart = true;
 				} else {
-					commandSource.getServer().getPlayerList().broadcastMessage(new StringTextComponent("Vote failed will not restart"), ChatType.CHAT, commandSource.getEntity().getUUID());
+					minecraftServer.getPlayerList().broadcastMessage(new StringTextComponent("Vote failed will not restart"), ChatType.CHAT, Util.NIL_UUID);
 					timeBetweenVotes = ConfigurationHandler.SERVER.timeBetweenVotes.get();
 					VoteRestartCommand.openVote = null;
 				}
 			} else {
-				commandSource.getServer().getPlayerList().broadcastMessage(new StringTextComponent("Vote failed due to more than half of the players not voting"), ChatType.CHAT, commandSource.getEntity().getUUID());
+				minecraftServer.getPlayerList().broadcastMessage(new StringTextComponent("Vote failed due to more than half of the players not voting"), ChatType.CHAT, Util.NIL_UUID);
 				timeBetweenVotes = ConfigurationHandler.SERVER.timeBetweenVotes.get();
 				VoteRestartCommand.openVote = null;
 			}
